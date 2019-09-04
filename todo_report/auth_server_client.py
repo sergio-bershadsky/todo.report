@@ -5,7 +5,8 @@ class AuthServerClient:
 
     @property
     def server_url(self):
-        return "http://localhost:8000/"
+        #return "http://localhost:8000/"
+        return "https://urbamatica.appspot.com/"
 
     def get_authorize_url(self, provider):
         return self.call("get_authorize_url", "get", provider=provider)

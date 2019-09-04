@@ -1,6 +1,5 @@
-from authlib.client import OAuth2Session
-
-from todo_report.auth_server_client import AuthServerClient
+import click
+import requests
 
 
 class TodoProviderType(type):
@@ -10,17 +9,43 @@ class TodoProviderType(type):
     def __init__(cls, name, base, attrs):
         super().__init__(name, base, attrs)
         if not attrs.get("abstract"):
-            TodoProviderType.registry[cls.get_name()] = cls
+            name = cls.get_name()
+            if name in TodoProviderType.registry:
+                raise TypeError(f"Provider with name {name} already registered")
+            TodoProviderType.registry[name] = cls
+
+
+class Api:
+
+    provider = None
+
+    def __init__(self, provider):
+        self.provider = provider
+
+
+class RestApi(Api):
+
+    def get(self, url, **params):
+        return requests.get(
+            f"{self.provider.api_base_url.rstrip('/')}{url}",
+            params=params,
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"{self.provider.token['token_type'].title()} {self.provider.token['access_token']}"
+            }
+        ).json()
 
 
 class ITodoProvider(metaclass=TodoProviderType):
 
     abstract = True
-    client_id: str
+
     api_base_url: str
-    access_token_url: str
-    authorize_url: str
-    client_kwargs: dict
+    token: str = None
+
+    @property
+    def api(self, cls=RestApi):
+        return cls(provider=self)
 
     @classmethod
     def get_name(cls):
@@ -31,24 +56,14 @@ class ITodoProvider(metaclass=TodoProviderType):
         return self.get_name()
 
     @property
-    def redirect_url(self) -> str:
-        server_url = AuthServerClient().server_url.rstrip("/")
-        return f"{server_url}/authorize/{self.get_name()}"
+    def token_id(self):
+        raise NotImplementedError()
 
-    @property
-    def conf(self):
-        return {k: v for k, v in self.__dict__.items() if k != "abstract"}
-
-    def get_authorize_url(self):
-        session = OAuth2Session(
-            client_id=self.client_id,
-        )
-        with session as s:
-            s.redirect_uri = self.redirect_url
-            url, state = s.create_authorization_url(
-                self.authorize_url
-            )
-            return url
+    def get_normalized_token(self):
+        return {
+            "pk": f"{self.token_id}@{self.name}",
+            "token": self.token
+        }
 
 
 class ProviderManager:
@@ -67,8 +82,22 @@ class ProviderManager:
         return list(TodoProviderType.registry.keys())
 
     @staticmethod
-    def get(name) -> ITodoProvider:
+    def get(name: object) -> object:
         name = name.lower()
         if name not in TodoProviderType.registry:
             raise Exception(f"{name.capitalize()} provider not found")
         return TodoProviderType.registry[name]()
+
+
+class Provider(click.Choice):
+
+    def __init__(self):
+        self.case_sensitive = True
+        super(Provider, self).__init__(
+            ProviderManager.list(),
+            case_sensitive=True
+        )
+
+    def convert(self, value, param, ctx):
+        result = super().convert(value, param, ctx)
+        return ProviderManager()[result]

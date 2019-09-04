@@ -1,25 +1,13 @@
-import json
 import time
-
 import click
 import click_spinner
 
 from todo_report.auth_server_client import AuthServerClient
-from todo_report.base import ProviderManager, ITodoProvider
+from todo_report.base import ITodoProvider, Provider
+from todo_report.cli.storage import AuthToken
 
 
-class Provider(click.Choice):
-
-    def __init__(self):
-        self.case_sensitive = True
-        super(Provider, self).__init__(
-            ProviderManager.list(),
-            case_sensitive=True
-        )
-
-    def convert(self, value, param, ctx):
-        result = super().convert(value, param, ctx)
-        return ProviderManager()[result]
+MAX_TRIES = 30
 
 
 @click.group("cli")
@@ -33,6 +21,8 @@ def cli():
     type=Provider()
 )
 def add(provider: ITodoProvider):
+    tries = 0
+    token = 0
     url, state = AuthServerClient().get_authorize_url(provider.name)
 
     with click_spinner.spinner():
@@ -40,10 +30,18 @@ def add(provider: ITodoProvider):
 
     with click_spinner.spinner(beep=True):
         while True:
+            if tries > MAX_TRIES:
+                break
+
             token = AuthServerClient().get_token(state)
             if isinstance(token, dict):
                 break
-    print(token)
+            time.sleep(1)
+            tries += 1
+
+    provider.token = token
+
+    AuthToken().create(provider.get_normalized_token())
 
 
 if __name__ == '__main__':
